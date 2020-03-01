@@ -1,0 +1,67 @@
+45,47c45,51
+< int* d_A;
+< int* d_B;
+< int* d_C;
+---
+> #ifndef NUM_DEVICES
+> #define NUM_DEVICES 2
+> #endif
+> 
+> int* d_A[NUM_DEVICES];
+> int* d_B[NUM_DEVICES];
+> int* d_C[NUM_DEVICES];
+58c62,69
+<     int N = 100000;
+---
+>     int N = 720720; // Evenly divisible to all integers up to 16
+> 
+>     int availableDevices;
+>     cudaGetDeviceCount(&availableDevices);
+>     if (availableDevices < NUM_DEVICES || (N % NUM_DEVICES) != 0) {
+>         printf("Invalid number of devices\n");
+>         exit(EXIT_FAILURE);
+>     }
+69,71c80,84
+<     cudaMalloc((void**)&d_A, N * sizeof(int));
+<     cudaMalloc((void**)&d_B, N * sizeof(int));
+<     cudaMalloc((void**)&d_C, N * sizeof(int));
+---
+>     for (int d = 0; d < NUM_DEVICES; d++) {
+>         cudaSetDevice(d);
+>         cudaMalloc((void**)&d_A[d], N/NUM_DEVICES * sizeof(int));
+>         cudaMalloc((void**)&d_B[d], N/NUM_DEVICES * sizeof(int));
+>         cudaMalloc((void**)&d_C[d], N/NUM_DEVICES * sizeof(int));
+73,74c86,88
+<     cudaMemcpy(d_A, h_A, N * sizeof(int), cudaMemcpyHostToDevice);
+<     cudaMemcpy(d_B, h_B, N * sizeof(int), cudaMemcpyHostToDevice);
+---
+>         cudaMemcpy(d_A[d], h_A + (N * d)/NUM_DEVICES, N/NUM_DEVICES * sizeof(int), cudaMemcpyHostToDevice);
+>         cudaMemcpy(d_B[d], h_B + (N * d)/NUM_DEVICES, N/NUM_DEVICES * sizeof(int), cudaMemcpyHostToDevice);
+>     }
+77,78c91,95
+<     int blocks_per_grid = (N + threads_per_block - 1) / threads_per_block;
+<     vec_add<<<blocks_per_grid, threads_per_block>>>(d_A, d_B, d_C, N);
+---
+>     int blocks_per_grid = (N/NUM_DEVICES + threads_per_block - 1) / threads_per_block;
+>     for (int d = 0; d < NUM_DEVICES; d++) {
+>         cudaSetDevice(d);
+>         vec_add<<<blocks_per_grid, threads_per_block>>>(d_A[d], d_B[d], d_C[d], N/NUM_DEVICES);
+>     }
+80c97,100
+<     cudaMemcpy(h_C, d_C, N * sizeof(int), cudaMemcpyDeviceToHost);
+---
+>     for (int d = 0; d < NUM_DEVICES; d++) {
+>         cudaSetDevice(d);
+>         cudaMemcpy(h_C + (N * d)/NUM_DEVICES, d_C[d], (N/NUM_DEVICES) * sizeof(int), cudaMemcpyDeviceToHost);
+>     }
+98,100c118,123
+< 		cudaFree(d_A);
+< 		cudaFree(d_B);
+< 		cudaFree(d_C);
+---
+> 		for (int d = 0; d < NUM_DEVICES; d++) {
+> 				cudaSetDevice(d);
+> 				cudaFree(d_A[d]);
+> 				cudaFree(d_B[d]);
+> 				cudaFree(d_C[d]);
+> 		}

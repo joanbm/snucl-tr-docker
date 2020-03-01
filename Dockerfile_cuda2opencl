@@ -1,0 +1,49 @@
+# FIXME: Using CUDA 9.0+ causes build errors when trying to build the samples (in the CUDA headers)
+# It likely requires an update to the LLVM bundled with CUDA2OpenCL so it seems far from trivial to fix
+FROM nvidia/cuda:8.0-devel-ubuntu16.04
+
+RUN apt-get update \
+ && apt-get install --yes --no-install-recommends \
+    ocl-icd-libopencl1 clinfo \
+    python opencl-headers libclblas-dev \
+ && rm -rf /var/lib/apt/lists/*
+
+# OpenCL support for NVIDIA
+# See https://gitlab.com/nvidia/container-images/opencl/-/blob/ubuntu16.04/runtime/Dockerfile
+RUN mkdir -p /etc/OpenCL/vendors && \
+    echo "libnvidia-opencl.so.1" > /etc/OpenCL/vendors/nvidia.icd
+
+# Copy SnuCL-TR files inside
+WORKDIR /snucl-tr
+COPY snucl-tr-0.8b.tar.gz vector_add_multigpu.patch ./
+RUN echo "5a210c6f2a9ec9210fcf7f3d89aef918570e6dbb2364fab81a6d08b7e2dc726f  snucl-tr-0.8b.tar.gz" | sha256sum -c \
+ && tar xf snucl-tr-0.8b.tar.gz
+
+# Define environment variables necessary for the CUDA2OpenCL Makefiles
+ENV CUDA_DIR "/usr/local/cuda"
+ENV CUDA_TO_OPENCL_DIR="/snucl-tr/cuda2opencl"
+
+# Build modified CUDA2OpenCL LLVM
+RUN mkdir -p cuda2opencl/llvm-3.3/build \
+ && cd cuda2opencl/llvm-3.3/build \
+ && ../configure --enable-optimized CC=gcc CXX=g++ \
+ # Compilation fails sometimes (probably race conditions with parallelism),
+ # as a workaround to avoid long compile times, retry on error
+ && (make -j"$(nproc)" || make -j"$(nproc)" || make -j"$(nproc)")
+
+# Build sample + modified multiGPU sample
+RUN cp -r cuda2opencl/sample cuda2opencl/sample_multigpu \
+ && cd cuda2opencl/sample \
+ && make -j"$(nproc)" \
+ && cd ../sample_multigpu \
+ && cat ../../vector_add_multigpu.patch \
+ && patch --normal -i ../../vector_add_multigpu.patch vector_add.cu \
+ && make -j"$(nproc)"
+
+# Run sample program
+RUN printf '#!/bin/sh\n\
+cd /snucl-tr/cuda2opencl/sample && ./vector_add_ocl\n\
+cd /snucl-tr/cuda2opencl/sample_multigpu && ./vector_add_ocl\n\
+' > launchscript.sh && chmod +x launchscript.sh
+
+CMD ["./launchscript.sh"]
